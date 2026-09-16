@@ -1,0 +1,150 @@
+/* InstaHub Injected Styles for Instagram */
+
+.instahub-badge-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  user-select: none;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.instahub-profile-header-badge {
+  margin-left: 12px;
+}
+
+.instahub-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  transition: all 0.15s ease-in-out;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  white-space: nowrap;
+}
+
+/* Badge variants - Light Mode */
+.instahub-badge-following {
+  background-color: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+}
+
+.instahub-badge-previously-followed {
+  background-color: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.instahub-badge-never-followed {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+}
+
+.instahub-badge-protected {
+  background: linear-gradient(135deg, #ede9fe 0%, #fae8ff 100%);
+  color: #7c3aed;
+  border: 1px solid #d8b4fe;
+  cursor: pointer;
+}
+
+.instahub-badge-protected:hover {
+  filter: brightness(0.95);
+  transform: scale(1.03);
+}
+
+.instahub-badge-protect-toggle {
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 10px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #64748b;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.instahub-badge-protect-toggle:hover {
+  opacity: 1;
+  border-color: #9333ea;
+  color: #9333ea;
+  background: #faf5ff;
+}
+
+/* Dark Mode support (system or Instagram dark theme) */
+@media (prefers-color-scheme: dark) {
+  .instahub-badge-following {
+    background-color: rgba(21, 128, 61, 0.25);
+    color: #4ade80;
+    border: 1px solid rgba(74, 222, 128, 0.4);
+  }
+
+  .instahub-badge-previously-followed {
+    background-color: rgba(180, 83, 9, 0.25);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.4);
+  }
+
+  .instahub-badge-never-followed {
+    background-color: rgba(100, 116, 139, 0.25);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+  }
+
+  .instahub-badge-protected {
+    background: linear-gradient(135deg, rgba(124, 58, 237, 0.35) 0%, rgba(192, 132, 252, 0.2) 100%);
+    color: #d8b4fe;
+    border: 1px solid rgba(192, 132, 252, 0.45);
+  }
+
+  .instahub-badge-protect-toggle {
+    background: rgba(30, 41, 59, 0.6);
+    color: #94a3b8;
+    border-color: #475569;
+  }
+
+  .instahub-badge-protect-toggle:hover {
+    background: rgba(147, 51, 234, 0.25);
+    color: #c084fc;
+    border-color: #a855f7;
+  }
+}
+
+/* Keyboard Navigation Active Row Highlight */
+.instahub-row-active {
+  position: relative !important;
+  background-color: rgba(168, 85, 247, 0.12) !important;
+  border-radius: 10px !important;
+  outline: 2px solid #a855f7 !important;
+  outline-offset: -1px !important;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.25) !important;
+  transition: background-color 0.15s ease, outline 0.15s ease !important;
+}
+
+.instahub-row-active::after {
+  content: "↵ Enter";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #a855f7;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0.9;
+  z-index: 9999;
+}

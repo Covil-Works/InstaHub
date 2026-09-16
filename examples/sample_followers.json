@@ -1,0 +1,50 @@
+[
+  {
+    "username": "arthurhenrique",
+    "name": "Arthur Henrique",
+    "iFollow": true,
+    "followsMe": false,
+    "everFollowed": true,
+    "protected": true
+  },
+  {
+    "username": "gabrielsilva",
+    "name": "Gabriel Silva",
+    "iFollow": true,
+    "followsMe": true,
+    "everFollowed": true,
+    "protected": true
+  },
+  {
+    "username": "mariana_costa",
+    "name": "Mariana Costa",
+    "iFollow": true,
+    "followsMe": false,
+    "everFollowed": true,
+    "protected": false
+  },
+  {
+    "username": "lucas.dev",
+    "name": "Lucas Dev",
+    "iFollow": false,
+    "followsMe": true,
+    "everFollowed": false,
+    "protected": false
+  },
+  {
+    "username": "antigo_contato",
+    "name": "Antigo Contato",
+    "iFollow": false,
+    "followsMe": false,
+    "everFollowed": true,
+    "protected": false
+  },
+  {
+    "username": "felipe_mentor",
+    "name": "Felipe Mentor",
+    "iFollow": false,
+    "followsMe": false,
+    "everFollowed": false,
+    "protected": true
+  }
+]
