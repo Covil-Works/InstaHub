@@ -683,8 +683,60 @@ async function handleToggleWhitelist(username: string) {
 }
 
 // ----------------------------------------------------
-// KEYBOARD NAVIGATION
+// KEYBOARD NAVIGATION & AUTO-SCROLL
 // ----------------------------------------------------
+
+/**
+ * Finds the actual scrollable container inside the Instagram dialog
+ */
+function getDialogScrollContainer(searchRoot: HTMLElement): HTMLElement {
+  // Check if searchRoot itself is scrollable
+  if (searchRoot.scrollHeight > searchRoot.clientHeight && searchRoot.clientHeight > 0) {
+    const style = window.getComputedStyle(searchRoot);
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+      return searchRoot;
+    }
+  }
+
+  // Check child divs with scroll
+  const divs = Array.from(searchRoot.querySelectorAll<HTMLElement>('div'));
+  for (const el of divs) {
+    if (el.scrollHeight > el.clientHeight && el.clientHeight > 80) {
+      const style = window.getComputedStyle(el);
+      if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+        return el;
+      }
+    }
+  }
+
+  // Check row parents
+  if (currentModalRows.length > 0 && currentModalRows[0].parentElement) {
+    let curr: HTMLElement | null = currentModalRows[0].parentElement;
+    while (curr && curr !== searchRoot && curr !== document.body) {
+      if (curr.scrollHeight > curr.clientHeight && curr.clientHeight > 80) {
+        return curr;
+      }
+      curr = curr.parentElement;
+    }
+  }
+
+  return searchRoot;
+}
+
+/**
+ * Scrolls the container and fires scroll events to trigger Instagram's infinite scroll loading
+ */
+function triggerInfiniteScroll(searchRoot: HTMLElement) {
+  const scrollContainer = getDialogScrollContainer(searchRoot);
+  if (scrollContainer) {
+    // Scroll container down to bottom to trigger Instagram's observer/fetch
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+    // Re-scan quickly so newly mounted rows receive badges and row tags immediately
+    triggerDebouncedScan(80);
+  }
+}
 
 function handleKeyDown(e: KeyboardEvent) {
   if (!settings.keyboardNavEnabled) return;
@@ -710,8 +762,11 @@ function handleKeyDown(e: KeyboardEvent) {
   const isExplorePeople = window.location.pathname.startsWith('/explore/people');
   const suggestions = isExplorePeople ? document.querySelector('main') : null;
 
-  const searchRoot = dialog || suggestions;
+  const searchRoot = (dialog || suggestions) as HTMLElement | null;
   if (!searchRoot) return;
+
+  // Scan immediately to ensure any recently rendered items are recognized
+  scanAndInject();
 
   // Update current list of rows marked by InstaHub
   const rows = Array.from(
@@ -721,26 +776,60 @@ function handleKeyDown(e: KeyboardEvent) {
   if (rows.length === 0) return;
   currentModalRows = rows;
 
+  // If activeRowIndex is unset, find the first item visible in the container viewport
+  if (activeRowIndex < 0 || activeRowIndex >= currentModalRows.length) {
+    const scrollContainer = getDialogScrollContainer(searchRoot);
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const visibleIndex = currentModalRows.findIndex((r) => {
+      const rRect = r.getBoundingClientRect();
+      return rRect.top >= containerRect.top - 20 && rRect.bottom <= containerRect.bottom + 20;
+    });
+    activeRowIndex = visibleIndex !== -1 ? visibleIndex : 0;
+  }
+
   if (e.key === 'ArrowDown') {
     e.preventDefault();
     e.stopPropagation();
 
     if (activeRowIndex < currentModalRows.length - 1) {
       activeRowIndex++;
+      updateActiveRow(searchRoot);
+
+      // Proactively trigger infinite scroll when approaching the bottom (last 3 rows)
+      if (activeRowIndex >= currentModalRows.length - 3) {
+        triggerInfiniteScroll(searchRoot);
+      }
     } else {
-      activeRowIndex = 0;
+      // Reached the end of currently loaded rows!
+      // Trigger Instagram's pagination to load more
+      triggerInfiniteScroll(searchRoot);
+
+      // Re-scan immediately and see if new rows appeared
+      scanAndInject();
+      const freshRows = Array.from(
+        searchRoot.querySelectorAll<HTMLElement>('[data-instahub-row="true"]')
+      );
+
+      if (freshRows.length > currentModalRows.length) {
+        currentModalRows = freshRows;
+        activeRowIndex++;
+        updateActiveRow(searchRoot);
+      } else {
+        // Stay on the last item while Instagram loads new rows from network
+        updateActiveRow(searchRoot);
+      }
     }
-    updateActiveRow();
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     e.stopPropagation();
 
     if (activeRowIndex > 0) {
       activeRowIndex--;
+      updateActiveRow(searchRoot);
     } else {
-      activeRowIndex = currentModalRows.length - 1;
+      activeRowIndex = 0;
+      updateActiveRow(searchRoot);
     }
-    updateActiveRow();
   } else if (e.key === 'Enter') {
     if (activeRowIndex >= 0 && activeRowIndex < currentModalRows.length) {
       e.preventDefault();
@@ -757,14 +846,38 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
-function updateActiveRow() {
+function updateActiveRow(searchRoot?: HTMLElement) {
   clearActiveRowHighlight();
 
   if (activeRowIndex >= 0 && activeRowIndex < currentModalRows.length) {
     const row = currentModalRows[activeRowIndex];
     if (row && row.isConnected) {
       row.classList.add('instahub-row-active');
-      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+      // 1. Smoothly center the row in the viewport
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+      // 2. Explicitly ensure the parent container scrollbar moves along
+      const root = searchRoot || document.querySelector('div[role="dialog"]') || document.body;
+      const scrollContainer = getDialogScrollContainer(root as HTMLElement);
+
+      if (scrollContainer && scrollContainer !== row) {
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+
+        // If row is too low, push scroll down
+        if (rowRect.bottom > containerRect.bottom - 50) {
+          const delta = rowRect.bottom - containerRect.bottom + 60;
+          scrollContainer.scrollTop += delta;
+          scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+        }
+        // If row is too high, pull scroll up
+        else if (rowRect.top < containerRect.top + 50) {
+          const delta = containerRect.top - rowRect.top + 60;
+          scrollContainer.scrollTop -= delta;
+          scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+        }
+      }
     }
   }
 }

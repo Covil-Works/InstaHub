@@ -135,16 +135,16 @@
 .instahub-row-active::after {
   content: "↵ Enter";
   position: absolute;
-  right: 12px;
+  right: 105px;
   top: 50%;
   transform: translateY(-50%);
   background: #a855f7;
   color: #ffffff;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
   pointer-events: none;
-  opacity: 0.9;
+  opacity: 0.85;
   z-index: 9999;
 }
