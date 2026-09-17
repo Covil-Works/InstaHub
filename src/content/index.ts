@@ -9,6 +9,7 @@ import { DEFAULT_SETTINGS } from '../utils/storage';
 // Current state in page
 let settings: ExtensionSettings = { ...DEFAULT_SETTINGS };
 let activeRowIndex: number = -1;
+let globalUserIndex: number = -1;
 let activeUsername: string | null = null;
 let currentModalRows: HTMLElement[] = [];
 let lastNavTimestamp: number = 0;
@@ -203,6 +204,7 @@ function setupUrlChangeListener() {
     if (currentUrl !== lastUrl) {
       lastUrl = currentUrl;
       activeRowIndex = -1;
+      globalUserIndex = -1;
       activeUsername = null;
       currentModalRows = [];
       clearActiveRowHighlight();
@@ -234,13 +236,16 @@ function setupObserver() {
     if (isInstaHubMutating) return;
 
     // Check if dialog state changed
-    const dialog = document.querySelector('div[role="dialog"]');
-    if (!dialog && activeRowIndex !== -1) {
+    const dialog = document.querySelector<HTMLElement>(
+      'div[role="dialog"], [role="dialog"], [aria-modal="true"]'
+    );
+    if (!dialog && (activeRowIndex !== -1 || globalUserIndex !== -1)) {
       activeRowIndex = -1;
+      globalUserIndex = -1;
       activeUsername = null;
       currentModalRows = [];
       clearActiveRowHighlight();
-    } else if (dialog && activeRowIndex === -1) {
+    } else if (dialog && activeRowIndex === -1 && globalUserIndex === -1) {
       triggerDebouncedScan(50);
     }
 
@@ -442,7 +447,9 @@ function scanAndInject() {
 
   // Find targeted containers:
   // 1. Dialog (Followers, Following, Likes)
-  const dialog = document.querySelector('div[role="dialog"]');
+  const dialog = document.querySelector<HTMLElement>(
+    'div[role="dialog"], [role="dialog"], [aria-modal="true"]'
+  );
 
   // 2. Suggestions container or Explore People page
   const isExplorePeople = window.location.pathname.startsWith('/explore/people');
@@ -458,8 +465,9 @@ function scanAndInject() {
 
   // If no dialog or suggestions container is active, exit and reset modal state
   if (roots.length === 0) {
-    if (activeRowIndex !== -1) {
+    if (activeRowIndex !== -1 || globalUserIndex !== -1) {
       activeRowIndex = -1;
+      globalUserIndex = -1;
       activeUsername = null;
       currentModalRows = [];
       clearActiveRowHighlight();
@@ -501,15 +509,18 @@ function scanAndInject() {
           if (targetEl?.closest?.('.instahub-badge-wrapper, button, a')) return;
 
           const searchRoot =
-            row.closest('div[role="dialog"]') ||
+            row.closest('div[role="dialog"], [role="dialog"], [aria-modal="true"]') ||
             document.querySelector('main') ||
             document.body;
           currentModalRows = ensureModalRows(searchRoot as HTMLElement);
           const idx = currentModalRows.indexOf(row);
           if (idx !== -1) {
             activeRowIndex = idx;
+            globalUserIndex = idx;
             activeUsername = getUsernameFromRow(row);
-            updateActiveRow('none');
+            clearActiveRowHighlight();
+            row.classList.add('instahub-row-active');
+            renderEnterIndicator(row);
           }
         });
       }
@@ -555,16 +566,28 @@ function scanAndInject() {
     const freshRows = ensureModalRows(dialog as HTMLElement);
     if (freshRows.length > 0) {
       currentModalRows = freshRows;
-      if (activeRowIndex < 0 || !document.querySelector('.instahub-row-active')) {
+      if (globalUserIndex < 0) {
+        globalUserIndex = 0;
         activeRowIndex = 0;
         activeUsername = getUsernameFromRow(freshRows[0]);
-        updateActiveRow('none');
-      } else if (activeUsername) {
-        const found = freshRows.findIndex((r) => getUsernameFromRow(r) === activeUsername);
-        if (found !== -1) {
-          activeRowIndex = found;
-          freshRows[found].classList.add('instahub-row-active');
-          renderEnterIndicator(freshRows[found]);
+        updateActiveRow('none', freshRows[0]);
+      } else {
+        // Modal já está ativo e em navegação: nunca reinicie globalUserIndex para 0!
+        const existingActive = document.querySelector('.instahub-row-active');
+        if (!existingActive) {
+          let rowToHighlight: HTMLElement | null = null;
+          if (activeUsername) {
+            rowToHighlight = freshRows.find((r) => getUsernameFromRow(r) === activeUsername) || null;
+          }
+          if (!rowToHighlight) {
+            rowToHighlight = findRowNearContainerFocalPoint(freshRows, dialog as HTMLElement);
+          }
+          if (rowToHighlight) {
+            rowToHighlight.classList.add('instahub-row-active');
+            renderEnterIndicator(rowToHighlight);
+            activeUsername = getUsernameFromRow(rowToHighlight);
+            activeRowIndex = freshRows.indexOf(rowToHighlight);
+          }
         }
       }
     }
@@ -882,6 +905,31 @@ function removeEnterIndicator() {
 }
 
 /**
+ * Localiza a linha mais próxima do ponto focal (centro) da área visível do diálogo
+ */
+function findRowNearContainerFocalPoint(rows: HTMLElement[], dialog: HTMLElement): HTMLElement | null {
+  if (rows.length === 0) return null;
+  const container = getDialogScrollContainer(rows[0]) || dialog;
+  const containerRect = container.getBoundingClientRect();
+  const focalY = containerRect.top + containerRect.height * 0.5;
+
+  let bestRow = rows[0];
+  let minDiff = Infinity;
+
+  for (const r of rows) {
+    const rRect = r.getBoundingClientRect();
+    const rowCenterY = rRect.top + rRect.height / 2;
+    const diff = Math.abs(rowCenterY - focalY);
+    if (diff < minDiff) {
+      minDiff = diff;
+      bestRow = r;
+    }
+  }
+
+  return bestRow;
+}
+
+/**
  * Localiza exclusivamente o contêiner interno com rolagem do diálogo de Seguidores/Seguindo do Instagram.
  * Começa procurando pelos ancestrais da linha ativa no DOM (garantindo que é o contêiner da lista)
  * e nunca retorna window ou document.body para não rolar a página principal.
@@ -966,7 +1014,7 @@ function getDialogScrollContainer(targetElement?: HTMLElement | null): HTMLEleme
  * Notifica os listeners de rolagem do Instagram para carregar mais usuários em segundo plano
  */
 function triggerInstagramPagination(searchRoot?: HTMLElement | null) {
-  const row = currentModalRows[activeRowIndex] || currentModalRows[0];
+  const row = (activeRowIndex >= 0 ? currentModalRows[activeRowIndex] : null) || currentModalRows[0];
   const scrollContainer = getDialogScrollContainer(row || (searchRoot as HTMLElement));
   if (scrollContainer) {
     scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -985,14 +1033,16 @@ function handleKeyDown(e: KeyboardEvent) {
       target.isContentEditable ||
       target.getAttribute('role') === 'textbox');
 
-  const dialog = document.querySelector('div[role="dialog"]');
+  const dialog = document.querySelector<HTMLElement>(
+    'div[role="dialog"], [role="dialog"], [aria-modal="true"]'
+  );
   const isExplorePeople = window.location.pathname.startsWith('/explore/people');
   const suggestions = isExplorePeople ? document.querySelector('main') : null;
   const searchRoot = (dialog || suggestions) as HTMLElement | null;
 
   if (!searchRoot) return;
 
-  // Se o foco estiver em um input dentro do modal de seguidores e pressionar ArrowDown,
+  // Se o foco estiver em um input dentro do modal e pressionar ArrowDown,
   // remove o foco do input de busca e transfere a navegação diretamente para a lista!
   if (isInputTarget) {
     if (dialog && target && dialog.contains(target) && e.key === 'ArrowDown') {
@@ -1011,12 +1061,13 @@ function handleKeyDown(e: KeyboardEvent) {
   if (freshRows.length === 0) return;
   currentModalRows = freshRows;
 
-  // Mantém a sincronia com o username selecionado caso itens tenham sido inseridos
-  if (activeUsername) {
-    const found = currentModalRows.findIndex((r) => getUsernameFromRow(r) === activeUsername);
-    if (found !== -1) {
-      activeRowIndex = found;
-    }
+  // Localiza o índice da linha atualmente destacada no DOM
+  let currentIdx = -1;
+  const activeEl = document.querySelector<HTMLElement>('.instahub-row-active');
+  if (activeEl && currentModalRows.includes(activeEl)) {
+    currentIdx = currentModalRows.indexOf(activeEl);
+  } else if (activeUsername) {
+    currentIdx = currentModalRows.findIndex((r) => getUsernameFromRow(r) === activeUsername);
   }
 
   if (e.key === 'ArrowDown') {
@@ -1024,61 +1075,93 @@ function handleKeyDown(e: KeyboardEvent) {
     e.stopPropagation();
 
     // Se nenhuma linha estiver selecionada ainda, seleciona a primeira (usuário 1)
-    if (
-      activeRowIndex < 0 ||
-      activeRowIndex >= currentModalRows.length ||
-      !document.querySelector('.instahub-row-active')
-    ) {
+    if (globalUserIndex < 0 || currentIdx === -1) {
+      globalUserIndex = 0;
       activeRowIndex = 0;
-      updateActiveRow('none');
+      const targetRow = currentModalRows[0];
+      activeUsername = getUsernameFromRow(targetRow);
+      updateActiveRow('none', targetRow);
       return;
     }
 
+    // Avança o contador sequencial do usuário
+    globalUserIndex++;
+
     // Se aproximando do final dos itens carregados, pede para o Instagram buscar mais
-    if (activeRowIndex >= currentModalRows.length - 4) {
+    if (currentIdx >= currentModalRows.length - 4 || globalUserIndex >= currentModalRows.length - 4) {
       triggerInstagramPagination(searchRoot);
     }
 
-    if (activeRowIndex < currentModalRows.length - 1) {
-      activeRowIndex++;
-      updateActiveRow('down');
+    if (currentIdx < currentModalRows.length - 1) {
+      const nextRow = currentModalRows[currentIdx + 1];
+      activeRowIndex = currentIdx + 1;
+      activeUsername = getUsernameFromRow(nextRow);
+      updateActiveRow('down', nextRow);
     } else {
-      // Já está no último item carregado: tenta ver se novas linhas surgiram
+      // Já está no último item carregado no DOM: aciona scroll e paginação para novas linhas surgirem
       triggerInstagramPagination(searchRoot);
-      const recheckedRows = ensureModalRows(searchRoot);
+      updateActiveRow('down', currentModalRows[currentModalRows.length - 1]);
 
-      if (recheckedRows.length > currentModalRows.length) {
-        currentModalRows = recheckedRows;
-        activeRowIndex++;
-        updateActiveRow('down');
-      } else {
-        updateActiveRow('down');
-      }
+      setTimeout(() => {
+        const recheckedRows = ensureModalRows(searchRoot);
+        if (recheckedRows.length > 0) {
+          currentModalRows = recheckedRows;
+          if (activeUsername) {
+            const recheckedIdx = currentModalRows.findIndex((r) => getUsernameFromRow(r) === activeUsername);
+            if (recheckedIdx !== -1 && recheckedIdx + 1 < currentModalRows.length) {
+              const newerRow = currentModalRows[recheckedIdx + 1];
+              activeRowIndex = recheckedIdx + 1;
+              activeUsername = getUsernameFromRow(newerRow);
+              clearActiveRowHighlight();
+              newerRow.classList.add('instahub-row-active');
+              renderEnterIndicator(newerRow);
+            }
+          }
+        }
+      }, 60);
     }
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
     e.stopPropagation();
 
-    // Se nenhuma linha estiver selecionada, seleciona a primeira
-    if (
-      activeRowIndex <= 0 ||
-      activeRowIndex >= currentModalRows.length ||
-      !document.querySelector('.instahub-row-active')
-    ) {
+    // Se já estiver no primeiro usuário
+    if (globalUserIndex <= 0) {
+      globalUserIndex = 0;
       activeRowIndex = 0;
-      updateActiveRow('none');
+      const targetRow = currentModalRows[0];
+      activeUsername = getUsernameFromRow(targetRow);
+      updateActiveRow('none', targetRow);
       return;
     }
 
-    activeRowIndex--;
-    updateActiveRow('up');
+    globalUserIndex--;
+
+    let prevRow: HTMLElement | null = null;
+    if (currentIdx > 0) {
+      prevRow = currentModalRows[currentIdx - 1];
+      activeRowIndex = currentIdx - 1;
+    } else {
+      prevRow = currentModalRows[0];
+      activeRowIndex = 0;
+    }
+
+    if (prevRow) {
+      activeUsername = getUsernameFromRow(prevRow);
+      updateActiveRow('up', prevRow);
+    }
   } else if (e.key === 'Enter') {
-    if (activeRowIndex >= 0 && activeRowIndex < currentModalRows.length) {
+    const activeEl = document.querySelector<HTMLElement>('.instahub-row-active');
+    const selectedRow =
+      activeEl ||
+      (activeRowIndex >= 0 && activeRowIndex < currentModalRows.length
+        ? currentModalRows[activeRowIndex]
+        : null);
+
+    if (selectedRow) {
       e.preventDefault();
       e.stopPropagation();
 
-      const selectedRow = currentModalRows[activeRowIndex];
-      const buttons = Array.from(selectedRow?.querySelectorAll('button') || []);
+      const buttons = Array.from(selectedRow.querySelectorAll('button') || []);
       const actionButton = buttons.find(isFollowButton) || buttons[0];
       if (actionButton) {
         actionButton.focus();
@@ -1088,19 +1171,25 @@ function handleKeyDown(e: KeyboardEvent) {
   }
 }
 
-
-function updateActiveRow(direction: 'down' | 'up' | 'none' = 'none') {
+function updateActiveRow(direction: 'down' | 'up' | 'none' = 'none', targetRow?: HTMLElement | null) {
   clearActiveRowHighlight();
 
-  if (activeRowIndex < 0 || activeRowIndex >= currentModalRows.length) {
-    return;
-  }
-
-  const row = currentModalRows[activeRowIndex];
+  let row = targetRow || null;
   if (!row || !row.isConnected) {
-    return;
+    if (activeRowIndex >= 0 && activeRowIndex < currentModalRows.length) {
+      row = currentModalRows[activeRowIndex];
+    }
   }
 
+  if (!row || !row.isConnected) {
+    if (currentModalRows.length > 0) {
+      row = currentModalRows[0];
+    } else {
+      return;
+    }
+  }
+
+  activeRowIndex = currentModalRows.indexOf(row);
   activeUsername = getUsernameFromRow(row);
   row.classList.add('instahub-row-active');
   renderEnterIndicator(row);
@@ -1116,15 +1205,15 @@ function updateActiveRow(direction: 'down' | 'up' | 'none' = 'none') {
   const scrollBehavior: ScrollBehavior = isRapid ? 'auto' : 'smooth';
 
   // Regra de rolagem da navegação:
-  // - Usuário 1 (índice 0): nenhum scroll (scrollTop = 0).
-  // - Usuário 2 (índice 1): nenhum scroll (scrollTop = 0).
-  // - Usuário 3 (índice 2): nenhum scroll (mantém o topo, 0).
+  // - Usuário 1 (globalUserIndex = 0): nenhum scroll (scrollTop = 0).
+  // - Usuário 2 (globalUserIndex = 1): nenhum scroll (scrollTop = 0).
+  // - Usuário 3 (globalUserIndex = 2): nenhum scroll (mantém o topo, 0).
   // - A partir do usuário 3 (ao avançar 3 -> 4, 4 -> 5, 5 -> 6, etc.):
   //   o diálogo desce 20% da sua área visível (clientHeight) a cada nova navegação para baixo.
   // - Ao navegar para cima com ↑: comportamento simétrico subindo 20% a cada passo até parar naturalmente no topo (0).
   const visibleHeight = scrollContainer.clientHeight;
   const step = Math.round(visibleHeight * 0.20);
-  const targetScrollTop = activeRowIndex >= 3 ? Math.round((activeRowIndex - 2) * step) : 0;
+  const targetScrollTop = globalUserIndex >= 3 ? Math.round((globalUserIndex - 2) * step) : 0;
 
   // 1. Tenta scroll suave nativo
   try {
@@ -1153,7 +1242,7 @@ function updateActiveRow(direction: 'down' | 'up' | 'none' = 'none') {
   // 3. Emite evento de rolagem para acionar a paginação do Instagram
   scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
 
-  if (activeRowIndex >= currentModalRows.length - 4) {
+  if (activeRowIndex >= currentModalRows.length - 4 || globalUserIndex >= currentModalRows.length - 4) {
     triggerInstagramPagination();
   }
 }
