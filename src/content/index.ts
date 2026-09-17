@@ -1093,6 +1093,21 @@ function renderBadge(wrapper: HTMLElement, info: UserStatusResult, username: str
     }
 
     wrapper.appendChild(statusBadge);
+
+    // Atualiza marcação de proteção na linha pai e sincroniza indicador Enter
+    const parentRow = wrapper.closest<HTMLElement>('[data-instahub-row="true"]');
+    if (parentRow) {
+      parentRow.dataset.instahubProtected = info.isProtected ? 'true' : 'false';
+    }
+
+    const activeRow = document.querySelector<HTMLElement>('.instahub-row-active');
+    if (activeRow && (activeRow.contains(wrapper) || getUsernameFromRow(activeRow) === username)) {
+      if (info.isProtected) {
+        removeEnterIndicator();
+      } else {
+        renderEnterIndicator(activeRow);
+      }
+    }
   } finally {
     isInstaHubMutating = false;
   }
@@ -1123,6 +1138,16 @@ async function handleToggleWhitelist(username: string) {
       `.instahub-badge-wrapper[data-username="${username}"]`
     );
     wrappers.forEach((w) => renderBadge(w, newStatus, username));
+
+    const activeRow = document.querySelector<HTMLElement>('.instahub-row-active');
+    if (activeRow && getUsernameFromRow(activeRow) === username) {
+      activeRow.dataset.instahubProtected = newStatus.isProtected ? 'true' : 'false';
+      if (newStatus.isProtected) {
+        removeEnterIndicator();
+      } else {
+        renderEnterIndicator(activeRow);
+      }
+    }
   }
 }
 
@@ -1193,10 +1218,31 @@ function ensureModalRows(searchRoot: HTMLElement): HTMLElement[] {
 }
 
 /**
+ * Verifica se uma linha representa um usuário protegido (whitelist).
+ */
+function isRowProtected(row: HTMLElement): boolean {
+  if (!row || !row.isConnected) return false;
+  if (row.dataset.instahubProtected === 'true') return true;
+  if (row.querySelector('.instahub-badge-protected')) return true;
+
+  const username = getUsernameFromRow(row);
+  if (username) {
+    const cached = userStatusCache.get(username);
+    if (cached && (cached.isProtected || cached.user?.protected)) return true;
+  }
+  return false;
+}
+
+/**
  * Renderiza o indicador de navegação ("↵ Enter") ao lado do botão de ação
  */
 function renderEnterIndicator(row: HTMLElement) {
   removeEnterIndicator();
+
+  // Usuários protegidos (whitelist) NÃO exibem o botão / indicador de Enter!
+  if (isRowProtected(row)) {
+    return;
+  }
 
   const indicator = document.createElement('span');
   indicator.className = 'instahub-enter-indicator';
@@ -1608,6 +1654,11 @@ function handleKeyDown(e: KeyboardEvent) {
     if (selectedRow) {
       e.preventDefault();
       e.stopPropagation();
+
+      // REGRA CRÍTICA: Se o usuário for protegido (whitelist), NÃO executa nenhuma ação com Enter!
+      if (isRowProtected(selectedRow)) {
+        return;
+      }
 
       const buttons = Array.from(selectedRow.querySelectorAll('button') || []);
       const actionButton = buttons.find(isFollowButton) || buttons[0];

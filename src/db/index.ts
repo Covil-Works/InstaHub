@@ -406,4 +406,56 @@ export async function syncInstagramUsers(
   };
 }
 
+/**
+ * Adiciona todos os usuários que sigo atualmente (iFollow = true) aos protegidos (whitelist).
+ */
+export async function protectAllCurrentFollowing(): Promise<{ modifiedCount: number }> {
+  const allUsers = await db.users.toArray();
+  const toProtect = allUsers.filter((u) => u.iFollow && !u.protected);
+
+  if (toProtect.length === 0) {
+    return { modifiedCount: 0 };
+  }
+
+  const now = Date.now();
+  const updated: UserRecord[] = toProtect.map((u) => ({
+    ...u,
+    protected: true,
+    updatedAt: now,
+  }));
+
+  await db.users.bulkPut(updated);
+  return { modifiedCount: updated.length };
+}
+
+/**
+ * Remove o status de protegido (whitelist) de todos os usuários da base de dados.
+ */
+export async function removeAllProtected(): Promise<{ modifiedCount: number }> {
+  const allUsers = await db.users.toArray();
+  const toUnprotect = allUsers.filter((u) => u.protected);
+
+  if (toUnprotect.length === 0) {
+    return { modifiedCount: 0 };
+  }
+
+  const now = Date.now();
+  const updated: UserRecord[] = toUnprotect.map((u) => ({
+    ...u,
+    protected: false,
+    updatedAt: now,
+  }));
+
+  await db.users.bulkPut(updated);
+  return { modifiedCount: updated.length };
+}
+
+/**
+ * Limpa completamente a base de dados local de usuários do InstaHub.
+ */
+export async function clearDatabase(): Promise<void> {
+  await db.users.clear();
+}
+
+
 
