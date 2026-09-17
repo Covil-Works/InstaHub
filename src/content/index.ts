@@ -16,6 +16,12 @@ let lastNavTimestamp: number = 0;
 const DEFAULT_SCROLL_STEP_PX = 56;
 let modalScrollStepPx: number = 0;
 
+// State for Instagram Unfollow Confirmation Dialog
+let isConfirmationDialogOpen: boolean = false;
+let activeConfirmationDialogBtnIndex: number = 0; // 0: confirm ("Deixar de seguir"), 1: cancel ("Cancelar")
+let pendingUnfollowUsername: string | null = null;
+let pendingUnfollowName: string | null = null;
+
 // Cache for known users to avoid redundant requests
 const userStatusCache = new Map<string, UserStatusResult>();
 const pendingUsernames = new Set<string>();
@@ -254,10 +260,17 @@ function setupObserver() {
     // 1. If InstaHub is actively injecting elements, ignore all mutations
     if (isInstaHubMutating) return;
 
-    // Check if dialog state changed
-    const dialog = document.querySelector<HTMLElement>(
-      'div[role="dialog"], [role="dialog"], [aria-modal="true"]'
-    );
+    // Check confirmation dialog state first
+    const confirmDlg = getUnfollowConfirmationDialog();
+    if (confirmDlg) {
+      handleConfirmationDialogOpened(confirmDlg);
+    } else if (isConfirmationDialogOpen) {
+      isConfirmationDialogOpen = false;
+      restoreListFocus();
+    }
+
+    // Check if main list dialog state changed
+    const dialog = getMainListDialog();
     if (!dialog && (activeRowIndex !== -1 || globalUserIndex !== -1)) {
       activeRowIndex = -1;
       globalUserIndex = -1;
@@ -284,6 +297,7 @@ function setupObserver() {
             el.classList.contains('instahub-badge') ||
             el.classList.contains('instahub-badge-protect-toggle') ||
             el.classList.contains('instahub-enter-indicator') ||
+            el.classList.contains('instahub-dialog-btn-active') ||
             el.closest?.('.instahub-badge-wrapper') ||
             el.closest?.('.instahub-enter-indicator')
           ) {
@@ -321,6 +335,279 @@ function extractUsernameFromHref(href: string): string | null {
     // Ignore invalid urls
   }
   return null;
+}
+
+// ----------------------------------------------------
+// UNFOLLOW CONFIRMATION DIALOG HANDLING (ZERO CLASS NAMES)
+// ----------------------------------------------------
+
+interface UnfollowDialogInfo {
+  dialog: HTMLElement;
+  confirmBtn: HTMLElement;
+  cancelBtn: HTMLElement;
+  buttons: HTMLElement[];
+  username: string | null;
+}
+
+function isUnfollowText(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  return (
+    t.includes('deixar de seguir') ||
+    t.includes('unfollow') ||
+    t.includes('dejar de seguir') ||
+    t.includes('ne plus suivre') ||
+    t.includes('não seguir') ||
+    t.includes('nicht mehr folgen') ||
+    t.includes('smetti di seguire') ||
+    t.includes('non seguire')
+  );
+}
+
+function isCancelText(text: string): boolean {
+  const t = text.toLowerCase().trim();
+  return (
+    t === 'cancelar' ||
+    t === 'cancel' ||
+    t === 'anular' ||
+    t === 'annuler' ||
+    t === 'abbrechen' ||
+    t === 'annulla' ||
+    t.includes('cancelar') ||
+    t.includes('cancel')
+  );
+}
+
+/**
+ * Identifica se um diálogo é o diálogo de confirmação para Deixar de Seguir,
+ * sem depender de nenhum nome de classe gerado pelo Instagram.
+ */
+function isUnfollowConfirmationDialog(dlg: HTMLElement): boolean {
+  const buttons = Array.from(dlg.querySelectorAll<HTMLElement>('button'));
+  if (buttons.length < 2 || buttons.length > 4) return false;
+
+  const hasConfirm = buttons.some((b) => isUnfollowText(b.textContent || ''));
+  const hasCancel = buttons.some((b) => isCancelText(b.textContent || ''));
+  if (hasConfirm && hasCancel) return true;
+
+  const text = (dlg.textContent || '').toLowerCase();
+  if ((isUnfollowText(text) || (text.includes('?') && text.includes('@'))) && buttons.length === 2) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Localiza o diálogo principal da lista de usuários (Seguidores / Seguindo),
+ * ignorando diálogos de confirmação de ação como "Deixar de seguir".
+ */
+function getMainListDialog(): HTMLElement | null {
+  const dialogs = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      'div[role="dialog"], [role="dialog"], div[aria-modal="true"]'
+    )
+  );
+
+  for (const dlg of dialogs) {
+    if (isUnfollowConfirmationDialog(dlg)) continue;
+    if (dlg.querySelector('a[href^="/"], a[role="link"]')) {
+      return dlg;
+    }
+  }
+
+  return dialogs.find((d) => !isUnfollowConfirmationDialog(d)) || null;
+}
+
+/**
+ * Retorna as informações do diálogo de confirmação de Deixar de Seguir atualmente aberto,
+ * com os botões e username identificados semanticamente (sem classes).
+ */
+function getUnfollowConfirmationDialog(): UnfollowDialogInfo | null {
+  const dialogs = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      'div[role="dialog"], [role="dialog"], div[aria-modal="true"]'
+    )
+  );
+
+  for (const dlg of dialogs) {
+    if (!isUnfollowConfirmationDialog(dlg)) continue;
+
+    const buttons = Array.from(dlg.querySelectorAll<HTMLElement>('button'));
+    let confirmBtn = buttons.find((b) => isUnfollowText(b.textContent || ''));
+    let cancelBtn = buttons.find((b) => isCancelText(b.textContent || ''));
+
+    if (!confirmBtn || !cancelBtn) {
+      confirmBtn = buttons[0];
+      cancelBtn = buttons[buttons.length - 1];
+    }
+
+    const username = extractUsernameFromDialog(dlg);
+
+    return {
+      dialog: dlg,
+      confirmBtn,
+      cancelBtn,
+      buttons,
+      username,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Extrai o username mencionado no diálogo de confirmação via texto ou atributo alt
+ */
+function extractUsernameFromDialog(dlg: HTMLElement): string | null {
+  const text = dlg.textContent || '';
+  const match = text.match(/@([a-zA-Z0-9._]+)/);
+  if (match && match[1]) {
+    return match[1].toLowerCase();
+  }
+
+  const img = dlg.querySelector('img[alt]');
+  if (img) {
+    const alt = img.getAttribute('alt') || '';
+    const imgMatch = alt.match(/([a-zA-Z0-9._]+)$/);
+    if (imgMatch && imgMatch[1]) {
+      return imgMatch[1].toLowerCase();
+    }
+  }
+
+  return activeUsername || pendingUnfollowUsername || null;
+}
+
+/**
+ * Move o foco e o destaque visual para o botão especificado do diálogo de confirmação
+ */
+function highlightConfirmationButton(info: UnfollowDialogInfo, index: number) {
+  activeConfirmationDialogBtnIndex = Math.max(0, Math.min(info.buttons.length - 1, index));
+
+  info.buttons.forEach((btn, i) => {
+    if (i === activeConfirmationDialogBtnIndex) {
+      btn.classList.add('instahub-dialog-btn-active');
+      btn.focus();
+    } else {
+      btn.classList.remove('instahub-dialog-btn-active');
+    }
+  });
+}
+
+/**
+ * Trata a abertura do diálogo de confirmação:
+ * Muda imediatamente o foco para o botão "Deixar de seguir" e prepara a escuta de cliques
+ */
+function handleConfirmationDialogOpened(info: UnfollowDialogInfo) {
+  isConfirmationDialogOpen = true;
+
+  if (info.dialog.dataset.instahubTracked !== 'true') {
+    info.dialog.dataset.instahubTracked = 'true';
+    activeConfirmationDialogBtnIndex = 0;
+    highlightConfirmationButton(info, 0);
+
+    info.confirmBtn.addEventListener(
+      'click',
+      () => {
+        const u = info.username || pendingUnfollowUsername || activeUsername;
+        if (u) {
+          recordConfirmedUnfollow(u, pendingUnfollowName || undefined);
+        }
+        setTimeout(restoreListFocus, 150);
+      },
+      { once: true }
+    );
+
+    info.cancelBtn.addEventListener(
+      'click',
+      () => {
+        setTimeout(restoreListFocus, 150);
+      },
+      { once: true }
+    );
+
+    // Instagram/React às vezes re-renderiza ou rouba o foco logo após montar o diálogo.
+    // Reforçamos o foco no botão de confirmação em 40ms e 120ms.
+    setTimeout(() => {
+      const recheck = getUnfollowConfirmationDialog();
+      if (recheck) {
+        highlightConfirmationButton(recheck, activeConfirmationDialogBtnIndex);
+      }
+    }, 40);
+
+    setTimeout(() => {
+      const recheck = getUnfollowConfirmationDialog();
+      if (recheck) {
+        highlightConfirmationButton(recheck, activeConfirmationDialogBtnIndex);
+      }
+    }, 120);
+  }
+}
+
+/**
+ * Registra formalmente a ação de unfollow confirmada no banco e atualiza badges/cache
+ */
+async function recordConfirmedUnfollow(username: string, displayName?: string) {
+  const res = await sendMessage<UserRecord>({
+    type: 'RECORD_FOLLOW_INTERACTION',
+    username,
+    name: displayName || username,
+    action: 'unfollow',
+  });
+
+  if (res.success && res.data) {
+    const updated = res.data;
+    const newStatus: UserStatusResult = {
+      username,
+      found: true,
+      status: updated.iFollow
+        ? 'following'
+        : updated.everFollowed
+        ? 'previouslyFollowed'
+        : 'neverFollowed',
+      isProtected: Boolean(updated.protected),
+      user: updated,
+    };
+
+    userStatusCache.set(username, newStatus);
+
+    const wrappers = document.querySelectorAll<HTMLElement>(
+      `.instahub-badge-wrapper[data-username="${username}"]`
+    );
+    wrappers.forEach((w) => renderBadge(w, newStatus, username));
+  }
+}
+
+/**
+ * Restaura o foco e destaque visual na linha da lista após o diálogo de confirmação ser fechado
+ */
+function restoreListFocus() {
+  document.querySelectorAll('.instahub-dialog-btn-active').forEach((el) => {
+    el.classList.remove('instahub-dialog-btn-active');
+  });
+  activeConfirmationDialogBtnIndex = 0;
+  pendingUnfollowUsername = null;
+  pendingUnfollowName = null;
+
+  const listDialog = getMainListDialog();
+  if (listDialog && settings.keyboardNavEnabled) {
+    const freshRows = ensureModalRows(listDialog);
+    if (freshRows.length > 0) {
+      currentModalRows = freshRows;
+      let rowToHighlight: HTMLElement | null = null;
+      if (activeUsername) {
+        rowToHighlight = freshRows.find((r) => getUsernameFromRow(r) === activeUsername) || null;
+      }
+      if (!rowToHighlight && activeRowIndex >= 0 && activeRowIndex < freshRows.length) {
+        rowToHighlight = freshRows[activeRowIndex];
+      }
+      if (rowToHighlight) {
+        clearActiveRowHighlight();
+        rowToHighlight.classList.add('instahub-row-active');
+        renderEnterIndicator(rowToHighlight);
+        activeRowIndex = freshRows.indexOf(rowToHighlight);
+      }
+    }
+  }
 }
 
 /**
@@ -467,9 +754,7 @@ function scanAndInject() {
 
   // Find targeted containers:
   // 1. Dialog (Followers, Following, Likes)
-  const dialog = document.querySelector<HTMLElement>(
-    'div[role="dialog"], [role="dialog"], [aria-modal="true"]'
-  );
+  const dialog = getMainListDialog();
 
   // 2. Suggestions container or Explore People page
   const isExplorePeople = window.location.pathname.startsWith('/explore/people');
@@ -655,12 +940,46 @@ function attachButtonListener(row: HTMLElement, username: string) {
       }
     }
 
+    if (action === 'unfollow') {
+      pendingUnfollowUsername = username;
+      pendingUnfollowName = name;
+
+      // O Instagram abre o diálogo de confirmação "Deixar de seguir @usuario?".
+      // Prepara e foca imediatamente no botão "Deixar de seguir".
+      setTimeout(() => {
+        const dlg = getUnfollowConfirmationDialog();
+        if (dlg) handleConfirmationDialogOpened(dlg);
+      }, 40);
+      setTimeout(() => {
+        const dlg = getUnfollowConfirmationDialog();
+        if (dlg) handleConfirmationDialogOpened(dlg);
+      }, 120);
+
+      // Fallback: se porventura não abriu modal em 800ms e tiver deixado de seguir diretamente:
+      setTimeout(() => {
+        const dlg = getUnfollowConfirmationDialog();
+        if (!dlg) {
+          const currentBtn = Array.from(row.querySelectorAll('button')).find(isFollowButton);
+          const currentText = (currentBtn?.textContent || '').toLowerCase().trim();
+          if (
+            currentText.includes('seguir') &&
+            !currentText.includes('seguindo') &&
+            !currentText.includes('deixar')
+          ) {
+            recordConfirmedUnfollow(username, name);
+          }
+        }
+      }, 800);
+      return;
+    }
+
+    // Ação de Seguir (Follow) imediata (sem diálogo de confirmação)
     setTimeout(async () => {
       const res = await sendMessage<UserRecord>({
         type: 'RECORD_FOLLOW_INTERACTION',
         username,
         name,
-        action,
+        action: 'follow',
       });
 
       if (res.success && res.data) {
@@ -1033,11 +1352,8 @@ function getDialogScrollContainer(targetElement?: HTMLElement | null): HTMLEleme
     }
   }
 
-  // 2. Busca dentro do modal aberto (role="dialog" ou aria-modal="true")
-  const modal =
-    document.querySelector<HTMLElement>('div[role="dialog"]') ||
-    document.querySelector<HTMLElement>('[role="dialog"]') ||
-    document.querySelector<HTMLElement>('div[aria-modal="true"]');
+  // 2. Busca dentro do modal aberto da lista
+  const modal = getMainListDialog();
 
   if (modal) {
     // Seletor clássico _aano
@@ -1091,6 +1407,74 @@ function handleKeyDown(e: KeyboardEvent) {
   }
   if (!settings.keyboardNavEnabled) return;
 
+  // 1. VERIFICAÇÃO PRIORITÁRIA DO DIÁLOGO DE CONFIRMAÇÃO DE DEIXAR DE SEGUIR
+  const confirmInfo = getUnfollowConfirmationDialog();
+  if (confirmInfo) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      e.stopPropagation();
+      // Desce para o botão Cancelar (ou próximo botão)
+      const nextIdx = Math.min(confirmInfo.buttons.length - 1, activeConfirmationDialogBtnIndex + 1);
+      highlightConfirmationButton(confirmInfo, nextIdx);
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      e.stopPropagation();
+      // Sobe para o botão Deixar de seguir (ou botão anterior)
+      const prevIdx = Math.max(0, activeConfirmationDialogBtnIndex - 1);
+      highlightConfirmationButton(confirmInfo, prevIdx);
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      const nextIdx = e.shiftKey
+        ? (activeConfirmationDialogBtnIndex - 1 + confirmInfo.buttons.length) % confirmInfo.buttons.length
+        : (activeConfirmationDialogBtnIndex + 1) % confirmInfo.buttons.length;
+      highlightConfirmationButton(confirmInfo, nextIdx);
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const selectedBtn = confirmInfo.buttons[activeConfirmationDialogBtnIndex] || confirmInfo.confirmBtn;
+      const isConfirm = selectedBtn === confirmInfo.confirmBtn || isUnfollowText(selectedBtn.textContent || '');
+
+      if (isConfirm) {
+        const userToUnfollow = confirmInfo.username || pendingUnfollowUsername || activeUsername;
+        if (userToUnfollow) {
+          recordConfirmedUnfollow(userToUnfollow, pendingUnfollowName || undefined);
+        }
+      }
+
+      selectedBtn.focus();
+      selectedBtn.click();
+
+      setTimeout(() => {
+        restoreListFocus();
+      }, 150);
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      confirmInfo.cancelBtn.focus();
+      confirmInfo.cancelBtn.click();
+      setTimeout(() => {
+        restoreListFocus();
+      }, 150);
+      return;
+    }
+
+    return;
+  }
+
   const target = e.target as HTMLElement | null;
   const isInputTarget =
     target &&
@@ -1099,9 +1483,7 @@ function handleKeyDown(e: KeyboardEvent) {
       target.isContentEditable ||
       target.getAttribute('role') === 'textbox');
 
-  const dialog = document.querySelector<HTMLElement>(
-    'div[role="dialog"], [role="dialog"], [aria-modal="true"]'
-  );
+  const dialog = getMainListDialog();
   const isExplorePeople = window.location.pathname.startsWith('/explore/people');
   const suggestions = isExplorePeople ? document.querySelector('main') : null;
   const searchRoot = (dialog || suggestions) as HTMLElement | null;
@@ -1230,8 +1612,23 @@ function handleKeyDown(e: KeyboardEvent) {
       const buttons = Array.from(selectedRow.querySelectorAll('button') || []);
       const actionButton = buttons.find(isFollowButton) || buttons[0];
       if (actionButton) {
+        const u = getUsernameFromRow(selectedRow);
+        if (u) {
+          activeUsername = u;
+          pendingUnfollowUsername = u;
+        }
         actionButton.focus();
         actionButton.click();
+
+        // Checagem imediata para focar no botão do diálogo de confirmação assim que abrir
+        setTimeout(() => {
+          const dlg = getUnfollowConfirmationDialog();
+          if (dlg) handleConfirmationDialogOpened(dlg);
+        }, 40);
+        setTimeout(() => {
+          const dlg = getUnfollowConfirmationDialog();
+          if (dlg) handleConfirmationDialogOpened(dlg);
+        }, 120);
       }
     }
   }

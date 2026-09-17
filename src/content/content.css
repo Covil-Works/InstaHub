@@ -132,6 +132,14 @@
   transition: background-color 0.15s ease, outline 0.15s ease !important;
 }
 
+/* Confirmation Dialog Active Button Highlight */
+.instahub-dialog-btn-active {
+  outline: 2px solid #a855f7 !important;
+  outline-offset: -1px !important;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.45) !important;
+  transition: outline 0.15s ease, box-shadow 0.15s ease !important;
+}
+
 /* Dynamic Indicator positioned beside the Follow/Following action button */
 .instahub-enter-indicator {
   position: absolute !important;
