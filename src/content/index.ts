@@ -13,6 +13,8 @@ let globalUserIndex: number = -1;
 let activeUsername: string | null = null;
 let currentModalRows: HTMLElement[] = [];
 let lastNavTimestamp: number = 0;
+const DEFAULT_SCROLL_STEP_PX = 56;
+let modalScrollStepPx: number = 0;
 
 // Cache for known users to avoid redundant requests
 const userStatusCache = new Map<string, UserStatusResult>();
@@ -205,6 +207,7 @@ function setupUrlChangeListener() {
       lastUrl = currentUrl;
       activeRowIndex = -1;
       globalUserIndex = -1;
+      modalScrollStepPx = 0;
       activeUsername = null;
       currentModalRows = [];
       clearActiveRowHighlight();
@@ -242,6 +245,7 @@ function setupObserver() {
     if (!dialog && (activeRowIndex !== -1 || globalUserIndex !== -1)) {
       activeRowIndex = -1;
       globalUserIndex = -1;
+      modalScrollStepPx = 0;
       activeUsername = null;
       currentModalRows = [];
       clearActiveRowHighlight();
@@ -468,6 +472,7 @@ function scanAndInject() {
     if (activeRowIndex !== -1 || globalUserIndex !== -1) {
       activeRowIndex = -1;
       globalUserIndex = -1;
+      modalScrollStepPx = 0;
       activeUsername = null;
       currentModalRows = [];
       clearActiveRowHighlight();
@@ -905,13 +910,47 @@ function removeEnterIndicator() {
 }
 
 /**
+ * Determina o deslocamento de rolagem em pixels por linha.
+ * Ao invés de usar um percentual fixo da altura do contêiner (que varia e causa descompasso onde
+ * o scroll desce mais rápido do que a seleção), calcula o deslocamento em pixels com base no pitch real
+ * entre as linhas montadas (ou na altura da linha em pixels, com fallback de DEFAULT_SCROLL_STEP_PX).
+ */
+function getScrollStepPx(row?: HTMLElement | null): number {
+  if (modalScrollStepPx > 0) {
+    return modalScrollStepPx;
+  }
+
+  if (currentModalRows.length >= 2) {
+    const diff = Math.round(
+      currentModalRows[1].getBoundingClientRect().top - currentModalRows[0].getBoundingClientRect().top
+    );
+    if (diff >= 35 && diff <= 120) {
+      modalScrollStepPx = diff;
+      return modalScrollStepPx;
+    }
+  }
+
+  if (row) {
+    const rowHeight = Math.round(row.getBoundingClientRect().height);
+    if (rowHeight >= 35 && rowHeight <= 120) {
+      modalScrollStepPx = rowHeight;
+      return modalScrollStepPx;
+    }
+  }
+
+  return DEFAULT_SCROLL_STEP_PX;
+}
+
+/**
  * Localiza a linha mais próxima do ponto focal (centro) da área visível do diálogo
  */
 function findRowNearContainerFocalPoint(rows: HTMLElement[], dialog: HTMLElement): HTMLElement | null {
   if (rows.length === 0) return null;
   const container = getDialogScrollContainer(rows[0]) || dialog;
   const containerRect = container.getBoundingClientRect();
-  const focalY = containerRect.top + containerRect.height * 0.5;
+  const step = getScrollStepPx(rows[0]);
+  // As 3 primeiras linhas ocupam o topo (0, step, 2*step). O cursor estabiliza a partir da 3ª linha (~2*step)
+  const focalY = containerRect.top + step * 2 + step * 0.5;
 
   let bestRow = rows[0];
   let minDiff = Infinity;
@@ -1204,15 +1243,14 @@ function updateActiveRow(direction: 'down' | 'up' | 'none' = 'none', targetRow?:
   lastNavTimestamp = now;
   const scrollBehavior: ScrollBehavior = isRapid ? 'auto' : 'smooth';
 
-  // Regra de rolagem da navegação:
+  // Regra de rolagem da navegação definida em pixels (ao invés de percentual):
   // - Usuário 1 (globalUserIndex = 0): nenhum scroll (scrollTop = 0).
   // - Usuário 2 (globalUserIndex = 1): nenhum scroll (scrollTop = 0).
   // - Usuário 3 (globalUserIndex = 2): nenhum scroll (mantém o topo, 0).
   // - A partir do usuário 3 (ao avançar 3 -> 4, 4 -> 5, 5 -> 6, etc.):
-  //   o diálogo desce 20% da sua área visível (clientHeight) a cada nova navegação para baixo.
-  // - Ao navegar para cima com ↑: comportamento simétrico subindo 20% a cada passo até parar naturalmente no topo (0).
-  const visibleHeight = scrollContainer.clientHeight;
-  const step = Math.round(visibleHeight * 0.20);
+  //   o diálogo desce o passo fixo em pixels correspondente à linha (step em px).
+  // - Ao navegar para cima com ↑: comportamento simétrico subindo o passo em pixels até o topo (0).
+  const step = getScrollStepPx(row);
   const targetScrollTop = globalUserIndex >= 3 ? Math.round((globalUserIndex - 2) * step) : 0;
 
   // 1. Tenta scroll suave nativo
