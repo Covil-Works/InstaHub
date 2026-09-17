@@ -13,6 +13,7 @@ import {
   UserX,
   CheckSquare,
   Square,
+  UserPlus,
 } from 'lucide-react';
 import type { UserRecord, FilterCategory } from '../../types';
 import { db, toggleUserProtected } from '../../db';
@@ -21,6 +22,7 @@ interface UserTableProps {
   users: UserRecord[];
   currentFilter: FilterCategory;
   onEditUser: (user: UserRecord) => void;
+  onNewUser?: () => void;
   onRefresh?: () => void;
 }
 
@@ -31,6 +33,7 @@ export const UserTable: React.FC<UserTableProps> = ({
   users,
   currentFilter,
   onEditUser,
+  onNewUser,
   onRefresh,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -240,6 +243,17 @@ export const UserTable: React.FC<UserTableProps> = ({
               <span>Excluir</span>
             </button>
           </div>
+        )}
+
+        {onNewUser && (
+          <button
+            onClick={onNewUser}
+            className="px-3.5 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer shrink-0 ml-auto"
+            title="Cadastrar Novo Usuário Manualmente"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Novo Usuário</span>
+          </button>
         )}
       </div>
 
