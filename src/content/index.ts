@@ -162,16 +162,25 @@ function handleFlagsToggle(enabled: boolean) {
   }
 }
 
+function isExtensionValid(): boolean {
+  try {
+    return Boolean(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
+  } catch {
+    return false;
+  }
+}
+
 function sendMessage<T = any>(msg: any): Promise<MessageResponse<T>> {
   return new Promise((resolve) => {
-    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
-      resolve({ success: false, error: 'chrome.runtime unavailable' });
+    if (!isExtensionValid() || !chrome.runtime?.sendMessage) {
+      resolve({ success: false, error: 'Contexto da extensão desconectado ou indisponível' });
       return;
     }
     try {
       chrome.runtime.sendMessage(msg, (response) => {
-        if (chrome.runtime.lastError) {
-          resolve({ success: false, error: chrome.runtime.lastError.message });
+        const lastErr = chrome.runtime.lastError;
+        if (lastErr) {
+          resolve({ success: false, error: lastErr.message });
         } else {
           resolve(response || { success: true });
         }
@@ -186,11 +195,13 @@ function sendMessage<T = any>(msg: any): Promise<MessageResponse<T>> {
  * Triggers a debounced scan to avoid freezing Instagram with repeated microtask calls
  */
 function triggerDebouncedScan(delay = 150) {
+  if (!isExtensionValid()) return;
   if (scanDebounceTimer !== null) {
     window.clearTimeout(scanDebounceTimer);
   }
   scanDebounceTimer = window.setTimeout(() => {
     scanDebounceTimer = null;
+    if (!isExtensionValid()) return;
     scanAndInject();
   }, delay);
 }
@@ -235,6 +246,11 @@ function setupUrlChangeListener() {
  */
 function setupObserver() {
   const observer = new MutationObserver((mutations) => {
+    if (!isExtensionValid()) {
+      observer.disconnect();
+      return;
+    }
+
     // 1. If InstaHub is actively injecting elements, ignore all mutations
     if (isInstaHubMutating) return;
 
@@ -921,16 +937,20 @@ function getScrollStepPx(row?: HTMLElement | null): number {
   }
 
   if (currentModalRows.length >= 2) {
-    const diff = Math.round(
-      currentModalRows[1].getBoundingClientRect().top - currentModalRows[0].getBoundingClientRect().top
-    );
-    if (diff >= 35 && diff <= 120) {
-      modalScrollStepPx = diff;
-      return modalScrollStepPx;
+    const row0 = currentModalRows[0];
+    const row1 = currentModalRows[1];
+    if (row0?.isConnected && row1?.isConnected) {
+      const diff = Math.round(
+        row1.getBoundingClientRect().top - row0.getBoundingClientRect().top
+      );
+      if (diff >= 35 && diff <= 120) {
+        modalScrollStepPx = diff;
+        return modalScrollStepPx;
+      }
     }
   }
 
-  if (row) {
+  if (row && row.isConnected) {
     const rowHeight = Math.round(row.getBoundingClientRect().height);
     if (rowHeight >= 35 && rowHeight <= 120) {
       modalScrollStepPx = rowHeight;
@@ -946,16 +966,19 @@ function getScrollStepPx(row?: HTMLElement | null): number {
  */
 function findRowNearContainerFocalPoint(rows: HTMLElement[], dialog: HTMLElement): HTMLElement | null {
   if (rows.length === 0) return null;
-  const container = getDialogScrollContainer(rows[0]) || dialog;
+  const validRow = rows.find((r) => r?.isConnected) || rows[0];
+  const container = getDialogScrollContainer(validRow) || dialog;
+  if (!container) return validRow || null;
   const containerRect = container.getBoundingClientRect();
-  const step = getScrollStepPx(rows[0]);
+  const step = getScrollStepPx(validRow);
   // As 3 primeiras linhas ocupam o topo (0, step, 2*step). O cursor estabiliza a partir da 3ª linha (~2*step)
   const focalY = containerRect.top + step * 2 + step * 0.5;
 
-  let bestRow = rows[0];
+  let bestRow = validRow;
   let minDiff = Infinity;
 
   for (const r of rows) {
+    if (!r || !r.isConnected) continue;
     const rRect = r.getBoundingClientRect();
     const rowCenterY = rRect.top + rRect.height / 2;
     const diff = Math.abs(rowCenterY - focalY);
@@ -1062,6 +1085,10 @@ function triggerInstagramPagination(searchRoot?: HTMLElement | null) {
 }
 
 function handleKeyDown(e: KeyboardEvent) {
+  if (!isExtensionValid()) {
+    window.removeEventListener('keydown', handleKeyDown, true);
+    return;
+  }
   if (!settings.keyboardNavEnabled) return;
 
   const target = e.target as HTMLElement | null;

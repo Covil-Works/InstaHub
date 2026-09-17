@@ -20,6 +20,7 @@ async function runBuild() {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
+      sourcemap: true,
       rollupOptions: {
         input: {
           popup: resolve(rootDir, 'popup.html'),
@@ -48,6 +49,7 @@ async function runBuild() {
     build: {
       outDir: 'dist',
       emptyOutDir: false,
+      sourcemap: true,
       lib: {
         entry: resolve(rootDir, 'src/content/index.ts'),
         name: 'InstaHubContent',

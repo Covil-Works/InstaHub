@@ -26,6 +26,10 @@ chrome.runtime.onMessage.addListener(
   ) => {
     (async () => {
       try {
+        if (!message || typeof message !== 'object') {
+          sendResponse({ success: false, error: 'Mensagem vazia ou inválida' });
+          return;
+        }
         switch (message.type) {
           case 'GET_SETTINGS': {
             const settings = await getExtensionSettings();
